@@ -51,16 +51,6 @@ var x1: float
 x1 = inverse_erf(0.25)
 ```
 
-Below are the supported binomial functions:
-```Nim
-import special_functions/binomial
-
-var x1: int
-
-# Binomial functions
-x1 = binomial_coefficient(20, 10)
-```
-
 
 ## Future Directions:
 There are really two directions this library can grow.
@@ -95,7 +85,6 @@ Many of the algorithms used here are based off of different peoples' code.
 Thank you to:
 - https://github.com/jkovacic/math/
 - http://libit.sourceforge.net/math_8c-source.html
-- https://www.geeksforgeeks.org/space-and-time-efficient-binomial-coefficient/
 
 
 ## Contact
