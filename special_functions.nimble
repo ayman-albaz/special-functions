@@ -1,6 +1,6 @@
 # Package
 
-version       = "0.1.0"
+version       = "0.1.1"
 author        = "ayman albaz"
 description   = "Special mathematical functions in Nim"
 license       = "Apache-2.0"
