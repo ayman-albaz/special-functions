@@ -12,6 +12,8 @@ suite "Erf":
     All implementations are accurate to 15
   ]#
   
+  const r1 = 15
+
   setup:
     let t0 = getTime()
 
