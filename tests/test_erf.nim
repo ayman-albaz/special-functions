@@ -19,10 +19,10 @@ suite "Erf":
     echo "\n  RUNTIME: ", getTime() - t0
 
   test "inverse_erf(0.25)":
-    check inverse_erf(0.25).round(15) == 0.225312055012178104725.round(15)
+    check inverse_erf(0.25).round(r1) == 0.225312055012178104725.round(r1)
 
   test "inverse_erf(0.50)":
-    check inverse_erf(0.50).round(15) == 0.4769362762044698733814.round(15)
+    check inverse_erf(0.50).round(r1) == 0.4769362762044698733814.round(r1)
 
   test "inverse_erf(0.75)":
-    check inverse_erf(0.75).round(15) == 0.8134198475976185416903.round(15)
+    check inverse_erf(0.75).round(r1) == 0.8134198475976185416903.round(r1)

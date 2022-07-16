@@ -7,7 +7,7 @@ Special functions is a Nim library for calculating 'special' mathematical functi
 ## Supported Functions
 Below are the supported gamma functions:
 ```Nim
-import special_functions/gamma
+import special_functions
 
 var x1: float
 
@@ -26,7 +26,7 @@ x1 = inverse_regularized_upper_incomplete_gamma(2.0, 0.25)
 
 Below are the supported beta functions:
 ```Nim
-import special_functions/beta
+import special_functions
 
 var x1: float
 
@@ -45,7 +45,7 @@ x1 = inverse_regularized_upper_incomplete_beta(2.0, 2.0, 0.25)
 
 Below are the supported erf functions:
 ```Nim
-import special_functions/erf
+import special_functions
 
 var x1: float
 
