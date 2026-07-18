@@ -1,162 +1,228 @@
-import math
+{.experimental: "strictFuncs".}
+{.push raises: [].}
+
+import std/math except lgamma, gamma, erf, erfc
+import realmath
 import mathutils
 
+## Incomplete gamma function (lower/upper), regularized variants
+## ``P(a,x)`` / ``Q(a,x)``, and their inverses.  Every function is generic
+## over ``SomeFloat``.  Precomputed-``G`` overloads accept ``G = gamma(a)``
+## to avoid recomputing the normalization constant in batch workloads.
+##
+## The forward incomplete gamma uses a continued fraction for ``x > a+1``
+## and a power series otherwise, both computed in regularized form to
+## prevent overflow for large ``a, x``.  The inverse uses Newton's method
+## with a log-space step to guard against overflow.
+##
+## All fallible functions return ``NaN`` for out-of-domain inputs
+## (``a ≤ 0``, ``x < 0``) or when iterative algorithms fail to converge.
 
-{.nanChecks: on, infChecks: on.}
+func incompleteGammaInternal[T: SomeFloat](a, x, G: T, lower, reg: bool): T =
+  if isNaN(a) or isNaN(x) or a <= T(0.0) or x < T(0.0):
+    return nanT(T)
 
-
-proc incomplete_gamma_ctdfrac_closure(a, x: float): ((proc(i: int): float {.closure, noSideEffect, gcsafe, locks: 0.}), (proc(i: int): float {.noSideEffect, gcsafe, locks: 0.})) =
-  let 
-    fa = proc(i: int): float = 
-      return -i.float * (i.float - a)
-
-    fb = proc(i: int): float = 
-      return x - a + 1.0 + 2.0 * i.float
-
-  return (fa, fb)
-
-
-proc incomplete_gamma(a, x: float, lower, reg: bool): float = 
-  # Based off of Jernej Kovačič's implementation: https://github.com/jkovacic/math/
-  if a < EPS or x < EPS:
-    raise newException(ValueError, "Must not be: a < EPS or b < EPS or x < 0.0 or x > 1")
-
-  var
-    ginc: float = exp(-x) * pow(x, a)
-    i: int = 1
-    G: float
-    term: float
-    at: float
-    fa, fb: ((proc(i: int): float {.closure, noSideEffect, gcsafe, locks: 0.}))
-  (fa, fb) = incomplete_gamma_ctdfrac_closure(a, x)
-
-  if x > (a + 1):
-    if lower == false and reg == false:
-      G = 0.0
+  if x == T(0.0):
+    if lower:
+      return T(0.0)
     else:
-      G = gamma(a)
-    ginc /=  ctdfrac_eval(fa, fb)
-    if lower == true:
-      ginc = G - ginc
-    if reg == true:
-      ginc /= G
+      return if reg: T(1.0) else: G
 
+  if x == infT(T):
+    if lower:
+      return if reg: T(1.0) else: G
+    else:
+      return T(0.0)
+
+  let logGinc = a * ln(x) - x - lgamma(a)
+  var ginc = exp(logGinc)
+
+  if x > (a + T(1.0)):
+    var
+      f = x - a + T(1.0)
+      c = f
+      d = T(0.0)
+      delta = T(0.0)
+      j = 1
+
+    while abs(delta - T(1.0)) > tolT(T) and j < MAX_ITER:
+      let fa = -T(j) * (T(j) - a)
+      let fb = x - a + T(1.0) + T(2.0) * T(j)
+      d = fb + fa * d
+      if abs(d) < lentzTinyT(T):
+        d = lentzTinyT(T)
+      c = fb + fa / c
+      if abs(c) < lentzTinyT(T):
+        c = lentzTinyT(T)
+      d = T(1.0) / d
+      delta = c * d
+      f *= delta
+      j += 1
+
+    if j >= MAX_ITER:
+      return nanT(T)
+
+    ginc /= f
+    if lower:
+      ginc = T(1.0) - ginc
   else:
-    if lower == true and reg == false:
-      G = 0.0
-    else:
-      G = gamma(a)
     ginc /= a
-    term = ginc
-    at = a
-    while abs(term) > TOL and i < MAX_ITER:
-      at += 1.0
+    var term = ginc
+    var at = a
+    var i = 1
+    while abs(term) > tolT(T) and i < MAX_ITER:
+      at += T(1.0)
       term *= x / at
       ginc += term
       i += 1
-
-    # check if the algorithm has converged:
     if i >= MAX_ITER:
-      raise newException(ValueError, "Algorithm has not converged")
+      return nanT(T)
+    if not lower:
+      ginc = T(1.0) - ginc
 
-    if lower == false:
-      ginc = G - ginc
-    if reg == true:
-      ginc /= G
-  
-  return ginc
+  if reg:
+    ginc
+  else:
+    ginc * G
 
+func lowerIncompleteGamma*[T: SomeFloat](a, x: T): T =
+  ## Lower incomplete gamma function
+  ## :math:`\gamma(a,x) = \int_0^x t^{a-1} e^{-t} dt`.
+  incompleteGammaInternal(a, x, gamma(a), lower = true, reg = false)
 
-proc lower_incomplete_gamma*(a, x: float): float =
-  return incomplete_gamma(a, x, true, false)
+func lowerIncompleteGamma*[T: SomeFloat](a, x, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  incompleteGammaInternal(a, x, G, lower = true, reg = false)
 
+func upperIncompleteGamma*[T: SomeFloat](a, x: T): T =
+  ## Upper incomplete gamma function
+  ## :math:`\Gamma(a,x) = \int_x^\infty t^{a-1} e^{-t} dt`.
+  incompleteGammaInternal(a, x, gamma(a), lower = false, reg = false)
 
-proc upper_incomplete_gamma*(a, x: float): float =
-  return incomplete_gamma(a, x, false, false)
+func upperIncompleteGamma*[T: SomeFloat](a, x, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  incompleteGammaInternal(a, x, G, lower = false, reg = false)
 
+func regularizedLowerIncompleteGamma*[T: SomeFloat](a, x: T): T =
+  ## Regularized lower incomplete gamma function
+  ## :math:`P(a,x) = \gamma(a,x) / \Gamma(a)`.
+  incompleteGammaInternal(a, x, gamma(a), lower = true, reg = true)
 
-proc regularized_lower_incomplete_gamma*(a, x: float): float =
-  return incomplete_gamma(a, x, true, true)
+func regularizedLowerIncompleteGamma*[T: SomeFloat](a, x, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  incompleteGammaInternal(a, x, G, lower = true, reg = true)
 
+func regularizedUpperIncompleteGamma*[T: SomeFloat](a, x: T): T =
+  ## Regularized upper incomplete gamma function
+  ## :math:`Q(a,x) = \Gamma(a,x) / \Gamma(a)`.
+  incompleteGammaInternal(a, x, gamma(a), lower = false, reg = true)
 
-proc regularized_upper_incomplete_gamma*(a, x: float): float =
-  return incomplete_gamma(a, x, false, true)
+func regularizedUpperIncompleteGamma*[T: SomeFloat](a, x, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  incompleteGammaInternal(a, x, G, lower = false, reg = true)
 
+func inverseIncompleteGammaInternal[T: SomeFloat](a, y, G: T, lower, reg: bool): T =
+  if isNaN(a) or isNaN(y) or a <= T(0.0) or y < T(0.0):
+    return nanT(T)
 
-proc inverse_incomplete_gamma(a, g: float, lower, reg: bool): float =
-  const
-    c1 = 0.253
-    c2 = 0.12
-
-  # sanity check
-  if a < EPS or g < 0.0:
-    raise newException(ValueError, "a must be < 2.2204e-16 and g must be less than 0")
-
-  let G = gamma(a)
-  var
-    p = g
-    x = 1.0
-    pa: float
-    cpa: float
-    xn: float = 0.0
-    i: int = 0
-    f: float
-
-  if reg == false:
+  var p = y
+  if not reg:
     p /= G
+  if not lower:
+    p = T(1.0) - p
 
-  if lower == false:
-    p = 1.0 - p
+  if abs(p) < epsT(T):
+    return T(0.0)
 
-  if abs(p) < EPS:
-    return 0.0
+  if p >= T(1.0) - epsT(T):
+    return infT(T)
 
-  if p >= 1 - EPS:
-    raise newException(ValueError, "p must be p >= 1 - 2.2204e-16")
+  let
+    c1 = T(0.253)
+    c2 = T(0.12)
 
-  if a <= 1.0:
-    pa = a * (c1 + c2 * a)
-    cpa = 1.0 - pa
-
+  var x: T
+  if a <= T(1.0):
+    let pa = a * (c1 + c2 * a)
+    let cpa = T(1.0) - pa
     if p < cpa:
-      x = pow(p / cpa, 1.0 / a)
+      x = pow(p / cpa, T(1.0) / a)
     else:
-      x = 1.0 - ln((1.0 - p) / pa)
-
+      x = T(1.0) - ln((T(1.0) - p) / pa)
   else:
     x = -as26_2_22(p)
-    # [Abramowitz & Stegun], section 26.4.17:
-    x = 1.0 - (1.0 / (9.0 * a)) + (x / (3.0 * sqrt(a)))
-    x  = a * x * x * x
+    x = T(1.0) - (T(1.0) / (T(9.0) * a)) + (x / (T(3.0) * sqrt(a)))
+    x = a * x * x * x
 
-  f = regularized_lower_incomplete_gamma(a, x) - p
+  var i = 0
+  var halvings = 0
+  let logG = lgamma(a)
+  var f = incompleteGammaInternal(a, x, G, lower = true, reg = true) - p
 
-  while abs(f) > TOL and i < MAX_ITER:
-    xn = x - f * G * exp(x) / pow(x, (a - 1.0))
-
-    # x must not go negative!
-    if xn > EPS:
-      x = xn
+  while abs(f) > tolT(T) and i < MAX_ITER:
+    let logFactor = logG + x - (a - T(1.0)) * ln(x)
+    var step: T
+    if logFactor > maxLogT(T):
+      step = infT(T)
     else:
-      x = x * 0.5
-
-    f = regularized_lower_incomplete_gamma(a, x) - p
+      step = f * exp(logFactor)
+    if step == infT(T) or isNaN(step):
+      x *= T(0.5)
+      inc halvings
+      if halvings > 20:
+        return nanT(T)
+    else:
+      let xn = x - step
+      if isNaN(xn) or xn < epsT(T):
+        x *= T(0.5)
+        inc halvings
+        if halvings > 20:
+          return nanT(T)
+      else:
+        x = xn
+        halvings = 0
+    f = incompleteGammaInternal(a, x, G, lower = true, reg = true) - p
     i += 1
 
-  # Has the algorithm converged?
   if i >= MAX_ITER:
-    raise newException(ValueError, "Algorithm has not converged")
+    return nanT(T)
 
-  return x
+  x
 
-proc inverse_lower_incomplete_gamma*(a, x: float): float =
-  return inverse_incomplete_gamma(a, x, true, false)
+func inverseLowerIncompleteGamma*[T: SomeFloat](a, y: T): T =
+  ## Inverse of the lower incomplete gamma function.
+  ## Returns ``x`` such that ``lowerIncompleteGamma(a, x) = y``.
+  inverseIncompleteGammaInternal(a, y, gamma(a), lower = true, reg = false)
 
-proc inverse_upper_incomplete_gamma*(a, x: float): float =
-  return inverse_incomplete_gamma(a, x, false, false)
+func inverseLowerIncompleteGamma*[T: SomeFloat](a, y, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  inverseIncompleteGammaInternal(a, y, G, lower = true, reg = false)
 
-proc inverse_regularized_lower_incomplete_gamma*(a, x: float): float =
-  return inverse_incomplete_gamma(a, x, true, true)
+func inverseUpperIncompleteGamma*[T: SomeFloat](a, y: T): T =
+  ## Inverse of the upper incomplete gamma function.
+  ## Returns ``x`` such that ``upperIncompleteGamma(a, x) = y``.
+  inverseIncompleteGammaInternal(a, y, gamma(a), lower = false, reg = false)
 
-proc inverse_regularized_upper_incomplete_gamma*(a, x: float): float =
-  return inverse_incomplete_gamma(a, x, false, true)
+func inverseUpperIncompleteGamma*[T: SomeFloat](a, y, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  inverseIncompleteGammaInternal(a, y, G, lower = false, reg = false)
+
+func inverseRegularizedLowerIncompleteGamma*[T: SomeFloat](a, y: T): T =
+  ## Inverse of the regularized lower incomplete gamma function.
+  ## Returns ``x`` such that ``regularizedLowerIncompleteGamma(a, x) = y``.
+  inverseIncompleteGammaInternal(a, y, gamma(a), lower = true, reg = true)
+
+func inverseRegularizedLowerIncompleteGamma*[T: SomeFloat](a, y, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  inverseIncompleteGammaInternal(a, y, G, lower = true, reg = true)
+
+func inverseRegularizedUpperIncompleteGamma*[T: SomeFloat](a, y: T): T =
+  ## Inverse of the regularized upper incomplete gamma function.
+  ## Returns ``x`` such that ``regularizedUpperIncompleteGamma(a, x) = y``.
+  inverseIncompleteGammaInternal(a, y, gamma(a), lower = false, reg = true)
+
+func inverseRegularizedUpperIncompleteGamma*[T: SomeFloat](a, y, G: T): T =
+  ## Precomputed ``G = gamma(a)`` overload for batch workloads.
+  inverseIncompleteGammaInternal(a, y, G, lower = false, reg = true)
+
+{.pop.}

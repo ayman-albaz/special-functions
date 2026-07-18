@@ -8,3 +8,6 @@ docs/build/
 .cache
 .DS_Store
 .vscode
+STATUS.md
+PLAN.md
+src/htmldocs/

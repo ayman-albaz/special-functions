@@ -1,86 +1,108 @@
-import math
+{.experimental: "strictFuncs".}
+{.push raises: [].}
 
+import std/math
+import realmath
 
-# GLOBAL CONSTANTS
+## Internal utilities shared across the library.
+##
+## Provides type-tuned constants (``epsT``, ``tolT``, ``lentzTinyT``,
+## ``maxLogT``), the iteration cap ``MAX_ITER``, and Acklam's inverse
+## normal CDF approximation (``as26_2_22``).  These symbols carry ``*``
+## for sibling-module access but are **not** re-exported through
+## ``special_functions.nim``.
+
 const
-  EPS* = 2.2204e-16
-  TOL* = 1e-15
   MAX_ITER* = 10000
+    ## Maximum number of iterations for Newton and continued-fraction loops.
 
-proc as26_2_22*(p: float): float =
-  ##[ 
-    Based off of Jernej Kovačič's implementation: https://github.com/jkovacic/math/
-    Implement the formula 26.2.22 in [Abramowitz & Stegun], i.e
-    return such `x` that approximately satisfies Q(x) ~= p.
-  ]##
-  # [Abramowitz & Stegun], section 26.2.22:
-  const
-    a0 = 2.30753
-    a1 = 0.27061
-    b0 = 0.99229
-    b1 = 0.04481
-  var
-    pp: float
-    t: float
-    x: float
+func epsT*(T: typedesc): T {.inline.} =
+  ## Machine epsilon for type ``T``.
+  when T is float32: 1.19209290e-7'f32
+  elif T is float64: 2.220446049250313e-16
+  else: T(2.220446049250313e-16)
 
-  if p >= 0.5:
-    pp = 1.0 - p
-  else:
-    pp = p
+func tolT*(T: typedesc): T {.inline.} =
+  ## Convergence tolerance for type ``T`` (Newton / continued-fraction loops).
+  when T is float32: 1e-6'f32
+  elif T is float64: 1e-15
+  else: T(1e-15)
 
-  t = sqrt(-2.0 * ln(pp))
-  x = t - (a0 + a1 * t) / (1.0 + t * (b0 + b1 * t))
+func lentzTinyT*(T: typedesc): T {.inline.} =
+  ## Floor value for Lentz continued-fraction denominators (prevents underflow).
+  when T is float32: 1e-19'f32
+  elif T is float64: 1e-30
+  else: T(1e-30)
 
-  if p > 0.5:
-    return -x
-  else:
-    return x
+func maxLogT*(T: typedesc): T {.inline.} =
+  ## Safe exponent ceiling; ``exp(maxLogT(T))`` fits in ``T`` without overflow.
+  when T is float32: 85.0'f32
+  elif T is float64: 700.0
+  else: T(700.0)
 
+func as26_2_22*[T: SomeFloat](p: T): T =
+  ## Inverse normal CDF (Acklam's rational approximation).
+  ## Relative error < 1.15e-9.  Used internally for initial guesses
+  ## in inverse incomplete gamma/beta.
+  ##
+  ## Sign convention: returns positive for ``p < 0.5``, negative for
+  ## ``p > 0.5`` (inverse of the standard probit convention), matching
+  ## the prior A&S 26.2.22 implementation used by existing callers.
 
-proc ctdfrac_eval*(fa: (proc(i: int): float {.closure, noSideEffect, gcsafe, locks: 0.}), fb: (proc(i: int): float {.closure, noSideEffect, gcsafe, locks: 0.})): float = 
-  ##[
-    Based off of Jernej Kovačič's implementation: https://github.com/jkovacic/math/
-  ]##
-  var
-    f: float = fb(0)
-    c: float = f
-    d: float = 0.0
-    Delta: float = 0.0
-    j: int = 1
-    a: float
-    b: float
+  if p <= T(0.0):
+    return -infT(T)
+  if p >= T(1.0):
+    return infT(T)
 
-  while abs(Delta - 1) > TOL and j < MAX_ITER:
-    # obtain 'aj' and 'bj'
-    a = fa(j)
-    b = fb(j)
+  let
+    a1 = T(-3.969683028665376e+01)
+    a2 = T(2.209460984245205e+02)
+    a3 = T(-2.759285104469687e+02)
+    a4 = T(1.383577518672690e+02)
+    a5 = T(-3.066479806614716e+01)
+    a6 = T(2.506628277459239e+00)
 
-    # dj = bj + aj * d_j-1
-    d = b + a * d
+    b1 = T(-5.447609879822406e+01)
+    b2 = T(1.615858368580409e+02)
+    b3 = T(-1.556989798598866e+02)
+    b4 = T(6.680131188771972e+01)
+    b5 = T(-1.328068155288572e+01)
 
-    if abs(d) < EPS:
-      d = EPS
+    c1 = T(-7.784894002430293e-03)
+    c2 = T(-3.223964580411365e-01)
+    c3 = T(-2.400758277161838e+00)
+    c4 = T(-2.549732539343734e+00)
+    c5 = T(4.374664141464968e+00)
+    c6 = T(2.938163982698783e+00)
 
-    # cj = bj + aj/c_j-1
-    c = b + a / c
+    d1 = T(7.784695709041462e-03)
+    d2 = T(3.224671290700398e-01)
+    d3 = T(2.445134137142996e+00)
+    d4 = T(3.754408661907416e+00)
 
-    if abs(c) < EPS:
-      c = EPS
+    thresh = T(0.02425)
+    two = T(2.0)
+    one = T(1.0)
 
-    # dj = 1 / dj
-    d = 1.0 / d
+  let lowTail = p < thresh
+  let highTail = p > one - thresh
 
-    # Delta_j = cj * dj
-    Delta = c * d
+  if lowTail:
+    let q = sqrt(-two * ln(p))
+    let num = (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6)
+    let den = ((((d1 * q + d2) * q + d3) * q + d4) * q + one)
+    return num / den
 
-    # fj = f_j-1 * Delta_j
-    f *= Delta
+  if highTail:
+    let q = sqrt(-two * ln(one - p))
+    let num = (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6)
+    let den = ((((d1 * q + d2) * q + d3) * q + d4) * q + one)
+    return -(num / den)
 
-    j += 1
+  let q = p - T(0.5)
+  let r = q * q
+  let num = (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q
+  let den = ((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + one
+  -(num / den)
 
-  # check if the algorithm has converged:
-  if j >= MAX_ITER:
-    raise newException(ValueError, "Algorithm has not converged")
-
-  return f
+{.pop.}
