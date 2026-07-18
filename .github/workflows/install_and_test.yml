@@ -32,4 +32,4 @@ jobs:
         run: nimble test
 
       - name: Build documentation
-        run: nim r --path:src -d:release nimdoc --project --index:on --outdir:htmldocs src/special_functions.nim
+        run: nim doc --path:src --project --index:on --outdir:htmldocs src/special_functions.nim
